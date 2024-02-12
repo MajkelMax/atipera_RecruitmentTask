@@ -25,6 +25,12 @@ public class GithubUserService {
 
     public List<ConvertBranchModel> getRepositoryBranches(String username) {
 
+        /*
+        That method utilizes a method at the bottom of the class
+         to retrieve all names of repositories for creating new
+         requests to fetch all branches for each repository.
+        */
+
         List<Repo> repoList = getUserRepositories(username);
 
         if (repoList == null){
@@ -55,7 +61,9 @@ public class GithubUserService {
     }
 
     private List<Repo> getUserRepositories(String username) {
-
+        /*
+        Returns list of Repositories with are not a fork
+        */
         List<Repo> repoList = new ArrayList<>();
 
         RestTemplate restTemplate = new RestTemplate();
