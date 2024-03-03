@@ -1,17 +1,13 @@
 package com.atipera.recruitmenttask.model;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
-import lombok.Data;
 
+public record Branch(
+        @JsonProperty("name")
+        String name,
 
-@Data
-public class Branch {
-
-    @JsonProperty("name")
-    private String name;
-
-    @JsonProperty("commit")
-    private Commit commit;
-
+        @JsonProperty("commit")
+        Commit commit
+) {
 
 }

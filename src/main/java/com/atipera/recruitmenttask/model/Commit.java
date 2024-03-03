@@ -1,12 +1,10 @@
 package com.atipera.recruitmenttask.model;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
-import lombok.Data;
 
-@Data
-public class Commit {
+public record Commit(
 
-    @JsonProperty("sha")
-    private String sha;
-
+        @JsonProperty("sha")
+        String sha
+) {
 }

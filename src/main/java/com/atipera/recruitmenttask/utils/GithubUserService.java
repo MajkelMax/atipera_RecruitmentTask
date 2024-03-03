@@ -16,49 +16,70 @@ import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.stream.Collectors;
 
 @Component
 @Getter
 @Setter
 public class GithubUserService {
 
+    private final ExecutorService virtualThreadExecutor = Executors.newVirtualThreadPerTaskExecutor();
 
-    public List<ConvertBranchModel> getRepositoryBranches(String username) {
+    /*
+     * Pobiera listę modeli ConvertBranchModel dla podanej nazwy użytkownika.
+     * Wykorzystuje wirtualne wątki do asynchronicznego pobierania danych.
+     *
+     * @param username Nazwa użytkownika GitHub
+     * @return CompletableFuture zawierające listę modeli ConvertBranchModel
+     */
+    public CompletableFuture<CompletableFuture<List<ConvertBranchModel>>> getRepositoryBranches(String username) {
 
-        /*
-        That method utilizes a method at the bottom of the class
-         to retrieve all names of repositories for creating new
-         requests to fetch all branches for each repository.
-        */
+        // Pobieranie listy repozytoriów użytkownika w tle
+        CompletableFuture<List<Repo>> repoCompletableFuture = CompletableFuture.supplyAsync(() -> getUserRepositories(username), virtualThreadExecutor);
 
-        List<Repo> repoList = getUserRepositories(username);
+        // Kontynuacja po pobraniu listy repozytoriów
+        return repoCompletableFuture.thenApplyAsync(repoList -> {
+            if (repoList.isEmpty()) {
+                throw new RepositoryNotFoundException("Użytkownik nie posiada żadnego repozytorium.");
+            }
 
-        if (repoList == null){
-            throw new RepositoryNotFoundException("User does not have anny repository.");
-        }
+            // Lista CompletableFuture do pobrania gałęzi dla każdego repozytorium
+            List<CompletableFuture<ConvertBranchModel>> branchCompletableFutures = new ArrayList<>();
+            RestTemplate restTemplate = new RestTemplate();
+            HttpHeaders headers = new HttpHeaders();
+            headers.setAccept(Collections.singletonList(MediaType.APPLICATION_JSON));
+            HttpEntity<String> entity = new HttpEntity<>(headers);
 
-        List<ConvertBranchModel> convertBranchModelList = new ArrayList<>();
+            for (Repo repo : repoList) {
+                String uri = Constants.getAllBranchesURI(username, repo.name());
 
-        RestTemplate restTemplate = new RestTemplate();
-        HttpHeaders headers = new HttpHeaders();
-        headers.setAccept(Collections.singletonList(MediaType.APPLICATION_JSON));
-        HttpEntity<String> entity = new HttpEntity<>(headers);
+                // Pobieranie gałęzi dla repozytorium w tle
+                CompletableFuture<ConvertBranchModel> branchCompletableFuture = CompletableFuture.supplyAsync(() -> {
+                    ResponseEntity<List<Branch>> result = restTemplate.exchange(uri, HttpMethod.GET, entity, new ParameterizedTypeReference<>() {
+                    });
+                    return new ConvertBranchModel(
+                            repo.name(),
+                            repo.owner().ownerLogin(),
+                            result.getBody());
+                }, virtualThreadExecutor);
 
-        for (Repo repo : repoList) {
+                branchCompletableFutures.add(branchCompletableFuture);
+            }
 
-            String uri = Constants.getAllBranchesURI(username, repo.getName());
-            ResponseEntity<List<Branch>> result = restTemplate.exchange(uri, HttpMethod.GET, entity, new ParameterizedTypeReference<>(){});
+            // Oczekiwanie na pobranie wszystkich gałęzi (poprawione)
+            CompletableFuture<Void> allFutures = CompletableFuture.allOf(branchCompletableFutures.toArray(new CompletableFuture[0]));
 
-            ConvertBranchModel convertBranchModel = new ConvertBranchModel();
-            convertBranchModel.setBranch(result.getBody());
-            convertBranchModel.setRepositoryName(repo.getName());
-            convertBranchModel.setOwnerLogin(repo.getOwner().getOwnerLogin());
+            // Pobieranie i łączenie wyników
+            return allFutures.thenApplyAsync(v -> branchCompletableFutures.stream()
+                    .map(CompletableFuture::join)
+                    .collect(Collectors.toList()), virtualThreadExecutor);
 
-            convertBranchModelList.add(convertBranchModel);
-
-        }
-        return convertBranchModelList;
+        }, virtualThreadExecutor);
     }
+
 
     private List<Repo> getUserRepositories(String username) {
         /*
@@ -86,7 +107,7 @@ public class GithubUserService {
 
                 if(result.getBody().length > 0) {
                     repoList.addAll(Arrays.stream(result.getBody())
-                            .filter(res -> !res.getFork()) // add name of the repository to list only if fork is false
+                            .filter(res -> !res.fork()) // add name of the repository to list only if fork is false
                             .toList());
                     page++;
                 } else {
